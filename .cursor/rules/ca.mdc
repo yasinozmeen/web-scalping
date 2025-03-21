@@ -1,0 +1,52 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+# Commit Mesajı ve Değişiklik Analizi Kuralları
+
+## Commit Mesajı Formatı
+
+```bash
+[Kısa Özet Başlık]
+
+[Detaylı Açıklama]
+
+Son Commit Değişiklikleri:
+- Dosya Değişiklikleri: Değişen dosyalar, yapılan ekleme/çıkarma nedenleri ve amaçları
+- Yapısal Değişiklikler: Kod organizasyonundaki önemli düzenlemeler
+
+Kullanıcı Perspektifi:
+- Kullanıcı Arayüzü Değişiklikleri: UI/UX'de yapılan güncellemeler, sebepleri ve kullanıcıya etkisi
+- Yeni Özellikler: Eklenen özellikler, kullanımı ve kullanıcı faydaları
+- Hata Düzeltmeleri: Çözülen sorunlar, öncesi ve sonrası kullanıcı etkisi
+- Kullanıcı Deneyimi İyileştirmeleri: Kullanım kolaylığı sağlayan yenilikler ve geliştirmeler
+- Dokümantasyon Değişiklikleri: Güncellenen ya da eklenen dokümantasyon detayları
+
+Teknik Detaylar:
+- Eklenen/Çıkarılan Import'lar: Yeni veya kaldırılan import tanımlamaları
+- Yeni Fonksiyonlar ve Endpoint'ler: Eklenen veya kaldırılan endpoint ve fonksiyonlar, kullanım amaçları
+- Yapılandırma Değişiklikleri: Ayarlarda yapılan önemli güncellemeler
+- Teknoloji ve Paket Değişiklikleri: Yeni eklenen veya kaldırılan teknolojiler ve paketler
+- API Değişiklikleri: Eklenen, kaldırılan veya güncellenen API'lar
+- Mimari Değişiklikler: Kod yapısında yapılan değişiklikler ve gerekçeleri
+- Performans İyileştirmeleri: Yapılan optimizasyonlar ve beklenen etkileri
+- Test Değişiklikleri: Eklenen veya güncellenen test senaryoları
+- Güvenlik İyileştirmeleri: Güvenlik amaçlı yapılan düzenlemeler ve beklenen katkıları
+
+
+İlgili Issue, PR veya Commit Referansları:
+- Bağlantılı issue numaraları, PR'lar veya commit referansları
+```
+
+## Örnek Kullanım
+```bash
+@CA.mdc @PR (Diff with Main Branch)
+```
+
+## Notlar
+- Yanıtını bash içerisinde ver.
+- Tüm analiz ve değişiklik detayları yalnızca commit mesajı içinde belirtilir
+- Commit mesajı kapsamlıdır, ancak başında kısa ve net bir özet bulunur
+- Yalnızca son commit üzerindeki değişiklikler değerlendirilir, önceki commit'ler göz ardı edilir
+
