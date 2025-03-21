@@ -12,7 +12,7 @@ TIMEOUTS = {
     'page_load': 180000,  
     'navigation': 90000   
 }
-
+#agdkjfhsad
 def setup_browser_context(playwright):
     try:
         browser = playwright.chromium.launch(headless=False)
@@ -25,7 +25,7 @@ def setup_browser_context(playwright):
         page = context.new_page()
         return browser, context, page
     except TimeoutError:
-        print("❌ Tarayıcı başlatma zaman aşımına uğradı!")
+        print("❌ Tarayıcı başlatma zaman asdfsadaşımına uğradı!")
         raise
     except Error as e:
         print(f"❌ Tarayıcı başlatma hatası: {str(e)}")
