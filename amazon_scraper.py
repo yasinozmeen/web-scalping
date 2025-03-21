@@ -25,7 +25,7 @@ def setup_browser_context(playwright):
         page = context.new_page()
         return browser, context, page
     except TimeoutError:
-        print("❌ Tarayıcı başlatma zaman asdfsadaşımına uğradı!")
+        print("❌ Tarayıcı başlatma zamadasdn asdfsadaşımına uğradı!")
         raise
     except Error as e:
         print(f"❌ Tarayıcı başlatma hatası: {str(e)}")
