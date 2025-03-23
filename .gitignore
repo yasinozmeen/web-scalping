@@ -1,0 +1,3 @@
+data/amazon_*_products_*.json
+data/amazon_*_search_page_*.html
+.env
