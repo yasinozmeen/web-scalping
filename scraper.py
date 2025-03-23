@@ -1,89 +1,113 @@
 import os
-from playwright.sync_api import sync_playwright, TimeoutError, Error
-from dotenv import load_dotenv
-import json
-from datetime import datetime
-import time
-from bs4 import BeautifulSoup
-import re
 import asyncio
-from playwright.async_api import async_playwright
-from amazon_selectors import get_selector, is_required, SELECTORS
+from playwright.async_api import async_playwright, TimeoutError
+from dotenv import load_dotenv
+from datetime import datetime
 from parser import extract_product_data
+import argparse
+import json
+import time
 
-# Load environment variables
-load_dotenv()
+async def save_html_content(content, filename):
+    os.makedirs('data', exist_ok=True)
+    with open(filename, 'w', encoding='utf-8') as f:
+        f.write(content)
+    print(f"HTML içeriği kaydedildi: {filename}")
 
-# Bright Data Configurations
-BRIGHT_DATA_USERNAME = os.getenv('BRIGHT_DATA_USERNAME')
-BRIGHT_DATA_PASSWORD = os.getenv('BRIGHT_DATA_PASSWORD')
-BROWSER_WS = f"wss://{BRIGHT_DATA_USERNAME}:{BRIGHT_DATA_PASSWORD}@brd.superproxy.io:9222"
-
-TIMEOUTS = {
-    'page_load': 180000,  
-    'navigation': 90000   
-}
-
-async def save_html_content(page, filename):
-    """HTML içeriğini dosyaya kaydeder."""
-    html_content = await page.content()
-    with open(filename, "w", encoding="utf-8") as f:
-        f.write(html_content)
-    print(f"HTML içeriği {filename} dosyasına kaydedildi.")
+async def wait_for_page_load(page):
+    """Sayfanın tam olarak yüklenmesini bekler"""
+    print("Sayfa yükleniyor...")
+    try:
+        # Sayfanın yüklenmesini bekle
+        await page.wait_for_load_state("domcontentloaded", timeout=60000)
+        
+        # Ürün kartlarının yüklenmesini bekle
+        await page.wait_for_selector('[data-asin]', state="visible", timeout=60000)
+        
+        # Lazy-load edilen görsellerin yüklenmesi için sayfayı aşağı kaydır
+        await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+        await asyncio.sleep(3)  # Ek yüklenme süresi
+        
+        # Tekrar yukarı çık
+        await page.evaluate("window.scrollTo(0, 0)")
+        await asyncio.sleep(1)
+        
+        print("Sayfa tamamen yüklendi")
+    except TimeoutError:
+        print("Sayfa yükleme zaman aşımı - mevcut içerikle devam ediliyor")
 
 async def main():
+    # Argüman parser'ı oluştur
+    parser = argparse.ArgumentParser(description='Amazon ürün arama ve veri çekme aracı')
+    parser.add_argument('--search', '-s', type=str, default='red car',
+                      help='Aranacak ürün adı (varsayılan: red car)')
+    args = parser.parse_args()
+    
+    search_term = args.search
+    print(f"Aranacak ürün: {search_term}")
+
     try:
+        # Bright Data bilgilerini yükle
+        load_dotenv()
+        auth = os.getenv('BRIGHT_DATA_AUTH')
+        host = os.getenv('BRIGHT_DATA_HOST')
+        port = os.getenv('BRIGHT_DATA_PORT')
+
+        if not all([auth, host, port]):
+            raise ValueError("Bright Data bilgileri eksik. Lütfen .env dosyasını kontrol edin.")
+
+        proxy_url = f"wss://{auth}@{host}:{port}"
+        print("Proxy bağlantısı kuruluyor...")
+
         async with async_playwright() as p:
-            # WebSocket bağlantısı için gerekli bilgiler
-            auth = os.getenv("BRIGHT_DATA_AUTH")
-            host = os.getenv("BRIGHT_DATA_HOST")
-            port = os.getenv("BRIGHT_DATA_PORT")
-            
-            browser = await p.chromium.connect_over_cdp(f"wss://{auth}@{host}:{port}")
+            # Tarayıcıyı Bright Data proxy'si ile başlat
+            browser = await p.chromium.connect_over_cdp(proxy_url)
             page = await browser.new_page()
+
+            # Amazon'a git
+            print("Amazon ana sayfasına gidiliyor...")
+            try:
+                await page.goto('https://www.amazon.com', 
+                              wait_until="domcontentloaded",
+                              timeout=60000)
+                print("Amazon ana sayfasına gidildi")
+            except TimeoutError:
+                print("Ana sayfa yükleme zaman aşımı - devam ediliyor")
+
+            # Arama kutusunu bekle ve arama yap
+            print(f"'{search_term}' için arama yapılıyor...")
+            try:
+                await page.wait_for_selector('#twotabsearchtextbox', timeout=60000)
+                await page.fill('#twotabsearchtextbox', search_term)
+                await page.click('#nav-search-submit-button')
+            except TimeoutError:
+                print("Arama kutusu bulunamadı")
+                raise
             
-            print("Tarayıcı başlatıldı ve sayfa oluşturuldu.")
-            
-            # Arama kelimesi
-            search_keyword = "laptop"  # Bu kısmı daha sonra parametre olarak alabiliriz
-            
-            # Amazon ana sayfasına git
-            await page.goto("https://www.amazon.com")
-            print("Amazon ana sayfasına gidildi.")
-            
-            # Arama yap
-            await page.fill("#twotabsearchtextbox", search_keyword)
-            await page.click("#nav-search-submit-button")
-            print(f"'{search_keyword}' için arama yapıldı ve sonuçlar bekleniyor...")
-            
-            # Sayfanın yüklenmesini bekle
-            await page.wait_for_selector(get_selector('product_container'))
-            print("Arama sonuçları yüklendi.")
-            
-            # Zaman damgası oluştur
-            timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-            
-            # HTML dosya adını oluştur
-            html_filename = f"data/amazon_{search_keyword}_search_page_{timestamp}.html"
-            
+            # Sayfanın tam olarak yüklenmesini bekle
+            await wait_for_page_load(page)
+            print(f"'{search_term}' araması tamamlandı")
+
             # HTML içeriğini kaydet
-            os.makedirs("data", exist_ok=True)  # data klasörünü oluştur
-            await save_html_content(page, html_filename)
-            
-            # HTML içeriğini analiz et
+            print("HTML içeriği kaydediliyor...")
+            content = await page.content()
+            timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+            html_filename = f'data/amazon_{search_term}_search_page_{timestamp}.html'
+            await save_html_content(content, html_filename)
+
+            # Ürün verilerini çek ve kaydet
+            print("Ürün verileri çekiliyor...")
             products = extract_product_data(html_filename)
-            
-            # Sonuçları JSON dosyasına kaydet
-            output_file = os.path.join("data", f"amazon_{search_keyword}_products_{timestamp}.json")
-            with open(output_file, "w", encoding="utf-8") as f:
+            json_filename = f'data/amazon_{search_term}_products_{timestamp}.json'
+            with open(json_filename, 'w', encoding='utf-8') as f:
                 json.dump(products, f, ensure_ascii=False, indent=2)
-            
-            print(f"Toplam {len(products)} ürün verisi çekildi ve {output_file} dosyasına kaydedildi.")
-            
+            print(f"Ürün verileri kaydedildi: {json_filename}")
+            print(f"Toplam {len(products)} ürün bulundu")
+
             await browser.close()
-            
+
     except Exception as e:
-        print(f"Bir hata oluştu: {str(e)}")
+        print(f"Hata oluştu: {str(e)}")
 
 if __name__ == "__main__":
     asyncio.run(main())
