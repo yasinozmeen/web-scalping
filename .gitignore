@@ -1,6 +1,7 @@
 # Amazon ürün verileri
 data/amazon_*_products_*.json
 data/amazon_*_search_page_*.html
+data/selector_test_results.json
 
 # Ortam değişkenleri
 .env
