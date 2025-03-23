@@ -1,6 +1,8 @@
 from bs4 import BeautifulSoup
 import json
 import os
+from amazon_selectors import get_selector, is_required, SELECTORS
+import re
 
 def extract_product_data(html_file_path):
     # HTML dosyasını oku
@@ -10,62 +12,138 @@ def extract_product_data(html_file_path):
     # BeautifulSoup objesi oluştur
     soup = BeautifulSoup(content, 'html.parser')
     
+    # Ürün konteynerini bul
+    product_container = soup.select_one(get_selector('product_container'))
+    if not product_container:
+        print("Ürün konteyneri bulunamadı!")
+        return []
+    
     # Tüm ürün kartlarını bul
-    product_cards = soup.select('div[data-asin]:not([data-asin=""])')
+    product_cards = product_container.select(get_selector('product_card'))
     products = []
     
     for card in product_cards:
-        product = {}
-        
-        # ASIN
-        product['asin'] = card.get('data-asin', '')
-        
-        # Index
-        product['index'] = card.get('data-index', '')
-        
-        # Title
-        title_element = card.select_one('h2 span')
-        product['title'] = title_element.text.strip() if title_element else ''
-        
-        # Sale Price
-        sale_price_element = card.select_one('span.a-price span.a-offscreen')
-        product['sale_price'] = sale_price_element.text.strip() if sale_price_element else ''
-        
-        # List Price
-        list_price_element = card.select_one('span.a-price.a-text-price span.a-offscreen')
-        product['list_price'] = list_price_element.text.strip() if list_price_element else ''
-        
-        # Badge ve Kategori
-        badge_element = card.select_one('span[id*="BEST_SELLER"], span[id*="AMAZON_CHOICE"]')
-        if badge_element:
-            product['badge'] = badge_element.get('id', '').split('_')[0]
-            product['badge_category'] = badge_element.text.strip()
-        else:
-            product['badge'] = ''
-            product['badge_category'] = ''
-        
-        # Is Organic
-        product['is_organic'] = 'true' if card.get('data-dib-organic') else 'false'
-        
-        # Image URL
-        img_element = card.select_one('img[src]')
-        product['image_url'] = img_element.get('src', '') if img_element else ''
-        
-        # Yorum Ortalaması
-        rating_element = card.select_one('i span')
-        if rating_element:
-            rating_text = rating_element.text.strip()
-            product['rating'] = rating_text.split(' ')[0] if rating_text else ''
-        else:
-            product['rating'] = ''
-        
-        # Yorum Sayısı
-        review_count_element = card.select_one('span[aria-label*="out of"] ~ div span')
-        product['review_count'] = review_count_element.text.strip() if review_count_element else ''
-        
-        products.append(product)
+        try:
+            product = {}
+            
+            # ASIN
+            asin = card.get('data-asin', '')
+            if not asin:
+                continue
+            product['asin'] = asin
+            
+            # Index
+            product['index'] = card.get('data-index', '')
+            
+            # Her bir seçici için veri çekme işlemi
+            for selector_name in SELECTORS:
+                if selector_name in ['product_card', 'product_container']:
+                    continue
+                
+                value = extract_field_value(card, selector_name)
+                
+                # Eğer zorunlu alan boşsa, hata fırlat
+                if is_required(selector_name) and not value:
+                    raise ValueError(f"Zorunlu alan boş: {selector_name}")
+                
+                # Özel durumlar için field mapping
+                field_name = selector_name
+                if selector_name == 'price':
+                    field_name = 'current_price'
+                
+                product[field_name] = value
+            
+            # İndirim yüzdesi hesaplama
+            if product.get('current_price', 'N/A') != 'N/A' and product.get('original_price', 'N/A') != 'N/A':
+                try:
+                    current = float(product['current_price'].replace('$', '').replace(',', ''))
+                    original = float(product['original_price'].replace('$', '').replace(',', ''))
+                    if original > current:
+                        discount = ((original - current) / original) * 100
+                        product['discount_percentage'] = f"{discount:.0f}%"
+                    else:
+                        product['discount_percentage'] = 'N/A'
+                except:
+                    product['discount_percentage'] = 'N/A'
+            else:
+                product['discount_percentage'] = 'N/A'
+            
+            products.append(product)
+            
+        except Exception as e:
+            print(f"Ürün bilgileri analiz edilemedi: {str(e)}")
+            continue
     
     return products
+
+def extract_field_value(card, selector_name):
+    """
+    Belirtilen seçici için değeri çeker.
+    
+    Args:
+        card: BeautifulSoup card elementi
+        selector_name: Seçici adı
+    
+    Returns:
+        str: Çekilen değer
+    """
+    # Ana seçiciyi dene
+    element = card.select_one(get_selector(selector_name))
+    
+    # Ana seçici başarısız olursa alternatifleri dene
+    if not element and selector_name in SELECTORS:
+        for alt_selector in get_selector(selector_name, "alternatives"):
+            element = card.select_one(alt_selector)
+            if element:
+                break
+    
+    # Özel durumlar
+    if selector_name == 'price' and element:
+        # Fiyat için özel işlem
+        price_whole = card.select_one(SELECTORS['price']['main'])
+        if price_whole:
+            try:
+                whole = price_whole.text.strip().replace(",", "").replace(".", "")
+                fraction = card.select_one(SELECTORS['price']['fraction'])
+                fraction = fraction.text.strip() if fraction else "00"
+                return f"${whole}.{fraction}"
+            except:
+                pass
+        # Alternatif fiyat formatı
+        price_text = element.text.strip()
+        price_text = re.sub(r'[^\d.]', '', price_text)
+        try:
+            return f"${float(price_text):.2f}"
+        except:
+            return "N/A"
+    
+    # Boolean değerler için özel işlem
+    if selector_name in ['prime', 'sponsored']:
+        return 'Yes' if element else 'No'
+    
+    # Stok durumu için özel işlem
+    if selector_name == 'stock':
+        if not element:
+            return 'In Stock'
+        return element.text.strip()
+    
+    # Genel durum
+    if element:
+        # URL özel durumu
+        if selector_name == 'url':
+            url = element.get('href', '')
+            if url:
+                if not url.startswith('http'):
+                    url = 'https://www.amazon.com' + url
+                if '/dp/' in url:
+                    asin = card.get('data-asin', '')
+                    url = f"https://www.amazon.com/dp/{asin}"
+                return url
+            return ''
+        
+        return element.text.strip()
+    
+    return 'N/A' if is_required(selector_name) else ''
 
 def main():
     # data klasöründeki HTML dosyasını bul
