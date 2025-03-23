@@ -11,7 +11,7 @@ SELECTORS = {
     },
     
     "is_organic": {
-        "main": './/div[contains(@class, "s-result-item")]',
+        "main": './/div[contains(@class, "s-result-item") and not(contains(@data-component-type, "sp-sponsored"))]',
         "required": False,
         "description": "Organik sonuç mu",
         "xpath": True,

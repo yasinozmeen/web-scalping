@@ -5,13 +5,15 @@ alwaysApply: false
 ---
 # Commit Mesajı ve Değişiklik Analizi Kuralları
 
+## Notlar
+- Yanıtını bash içerisinde ver.
+- Tüm analiz ve değişiklik detayları yalnızca commit mesajı içinde belirtilir
+- Commit mesajı kapsamlıdır, ancak başında kısa ve net bir özet bulunur
+- Yalnızca son commit üzerindeki değişiklikler değerlendirilir, önceki commit'ler göz ardı edilir
+
 ## Commit Mesajı Formatı
 
 ```bash
-[Kısa Özet Başlık]
-
-[Detaylı Açıklama]
-
 Son Commit Değişiklikleri:
 - Dosya Değişiklikleri: Değişen dosyalar, yapılan ekleme/çıkarma nedenleri ve amaçları
 - Yapısal Değişiklikler: Kod organizasyonundaki önemli düzenlemeler
@@ -40,9 +42,4 @@ Teknik Detaylar:
 @CA.mdc @PR (Diff with Main Branch)
 ```
 
-## Notlar
-- Yanıtını bash içerisinde ver.
-- Tüm analiz ve değişiklik detayları yalnızca commit mesajı içinde belirtilir
-- Commit mesajı kapsamlıdır, ancak başında kısa ve net bir özet bulunur
-- Yalnızca son commit üzerindeki değişiklikler değerlendirilir, önceki commit'ler göz ardı edilir
 
