@@ -20,27 +20,26 @@ alwaysApply: false
 
 ```bash
 Son Commit Değişiklikleri:
-- Dosya Değişiklikleri:
-  - amazon_selectors.py: Ürün indeks özniteliği güncellendi (data-index -> data-csa-c-pos)
-  - parser.py: Ürün indeksleme mantığı manuel sayaç sistemine geçirildi
-  - scraper.py: Headless mod aktif edildi
-  - requirements.txt: lxml paketi güncellendi (5.1.0 -> 5.3.1)
-  - .cursor/rules/ca.mdc: Metadata düzeltmesi yapıldı
-
-Teknik Detaylar:
-- Yapısal Değişiklikler:
-  - Ürün indeksleme sistemi yeniden tasarlandı
-  - Manuel sayaç ile sıralı indeksleme eklendi
-  
-- Seçici (Selector) Değişiklikleri:
-  - Amazon'un yeni data-csa-c-pos özniteliği kullanılmaya başlandı
-  
-- Tarayıcı Yapılandırması:
-  - Headless mod varsayılan olarak aktif edildi
+- Dosya Değişiklikleri: Değişen dosyalar, yapılan ekleme/çıkarma nedenleri ve amaçları
+- Yapısal Değişiklikler: Kod organizasyonundaki önemli düzenlemeler
 
 Kullanıcı Perspektifi:
-- Ürün sıralama ve indeksleme daha tutarlı hale getirildi
-- Performans iyileştirmesi (headless mod)
+- Kullanıcı Arayüzü Değişiklikleri: UI/UX'de yapılan güncellemeler, sebepleri ve kullanıcıya etkisi
+- Yeni Özellikler: Eklenen özellikler, kullanımı ve kullanıcı faydaları
+- Hata Düzeltmeleri: Çözülen sorunlar, öncesi ve sonrası kullanıcı etkisi
+- Kullanıcı Deneyimi İyileştirmeleri: Kullanım kolaylığı sağlayan yenilikler ve geliştirmeler
+- Dokümantasyon Değişiklikleri: Güncellenen ya da eklenen dokümantasyon detayları
+
+Teknik Detaylar:
+- Eklenen/Çıkarılan Import'lar: Yeni veya kaldırılan import tanımlamaları
+- Yeni Fonksiyonlar ve Endpoint'ler: Eklenen veya kaldırılan endpoint ve fonksiyonlar, kullanım amaçları
+- Yapılandırma Değişiklikleri: Ayarlarda yapılan önemli güncellemeler
+- Teknoloji ve Paket Değişiklikleri: Yeni eklenen veya kaldırılan teknolojiler ve paketler
+- API Değişiklikleri: Eklenen, kaldırılan veya güncellenen API'lar
+- Mimari Değişiklikler: Kod yapısında yapılan değişiklikler ve gerekçeleri
+- Performans İyileştirmeleri: Yapılan optimizasyonlar ve beklenen etkileri
+- Test Değişiklikleri: Eklenen veya güncellenen test senaryoları
+- Güvenlik İyileştirmeleri: Güvenlik amaçlı yapılan düzenlemeler ve beklenen katkıları
 ```
 
 ## Örnek Kullanım
