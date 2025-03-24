@@ -47,21 +47,9 @@ async def main():
     print(f"Aranacak ürün: {search_term}", flush=True)
 
     try:
-        # Bright Data bilgilerini yükle
-        load_dotenv()
-        auth = os.getenv('BRIGHT_DATA_AUTH')
-        host = os.getenv('BRIGHT_DATA_HOST')
-        port = os.getenv('BRIGHT_DATA_PORT')
-
-        if not all([auth, host, port]):
-            raise ValueError("Bright Data bilgileri eksik. Lütfen .env dosyasını kontrol edin.")
-
-        proxy_url = f"wss://{auth}@{host}:{port}"
-        print("Proxy bağlantısı kuruluyor...", flush=True)
-
         async with async_playwright() as p:
-            # Tarayıcıyı Bright Data proxy'si ile başlat
-            browser = await p.chromium.connect_over_cdp(proxy_url)
+            # Tarayıcıyı başlat
+            browser = await p.chromium.launch(headless=False)
             page = await browser.new_page()
 
             # Amazon'a git
