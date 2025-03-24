@@ -1,69 +1,82 @@
-# Amazon Ürün Veri Toplama Aracı
+# Amazon Ürün Veri Çekme Aracı
 
-Bu Python scripti, Amazon'dan ürün verilerini otomatik olarak toplar ve JSON formatında kaydeder.
+Bu proje, Amazon'dan belirli bir arama sonucuna göre ürün verilerini çeken basit bir web scraping aracıdır.
 
 ## Özellikler
 
-- Amazon ürün sayfalarından veri toplama
-- Ürün başlığı, fiyat, puan ve stok durumu bilgilerini çekme
-- Proxy desteği
-- Otomatik veri kaydetme (JSON formatında)
-- Hata yönetimi ve yeniden deneme mekanizması
+- Amazon'da arama yapma
+- Arama sonuçlarından temel ürün verilerini çekme:
+  - ASIN (Amazon Ürün Kimliği)
+  - Index (Ürün Sıra Numarası)
+  - Is Organic (Organik/Sponsorlu Sonuç Bilgisi)
+- HTML içeriğini kaydetme
+- Verileri JSON formatında saklama
 
 ## Gereksinimler
 
-- Python 3.7+
-- Playwright
-- python-dotenv
+```
+playwright==1.42.0
+python-dotenv==1.0.1
+lxml==5.1.0
+```
 
 ## Kurulum
 
-1. Gerekli paketleri yükleyin:
+1. Projeyi klonlayın
+2. Gerekli paketleri yükleyin:
 ```bash
 pip install -r requirements.txt
 ```
-
-2. Playwright'ı başlatın:
+3. Playwright tarayıcılarını yükleyin:
 ```bash
 playwright install
 ```
-
-3. `.env` dosyası oluşturun ve proxy bilgilerinizi ekleyin:
+4. `.env` dosyası oluşturun ve Bright Data bilgilerinizi ekleyin:
 ```
-PROXY_SERVER=proxy_address:port
-PROXY_USERNAME=your_username
-PROXY_PASSWORD=your_password
+BRIGHT_DATA_AUTH=your_auth
+BRIGHT_DATA_HOST=your_host
+BRIGHT_DATA_PORT=your_port
 ```
 
 ## Kullanım
 
-Scripti çalıştırmak için:
+Programı çalıştırmak için aşağıdaki komutları kullanabilirsiniz:
 
 ```bash
-python amazon_scraper.py
+# Varsayılan arama (red car) için:
+python scraper.py
+
+# Özel bir arama terimi için:
+python scraper.py --search "iphone"
+# veya
+python scraper.py -s "iphone"
 ```
 
-## Çıktı
+Program şu adımları gerçekleştirir:
+1. Amazon.com'a bağlanır
+2. Belirtilen ürünü arar (varsayılan: "red car")
+3. Arama sonuçlarının HTML'ini kaydeder
+4. Ürün verilerini çeker
+5. Verileri JSON formatında kaydeder
 
-Toplanan veriler `product_data.json` dosyasına kaydedilir. Örnek çıktı formatı:
+## Çıktı Formatı
 
 ```json
 {
-    "title": "Ürün Adı",
-    "price": "100.00 TL",
-    "rating": "4.5",
-    "availability": "Stokta",
-    "url": "https://www.amazon.com/...",
-    "timestamp": "2024-02-20 12:00:00"
+  "asin": "B0CRMZHDG8",
+  "index": "3",
+  "is_organic": false
 }
 ```
 
-## Güvenlik
+## Dosya Yapısı
 
-- Proxy bilgilerinizi güvenli bir şekilde `.env` dosyasında saklayın
-- `.env` dosyasını asla GitHub'a yüklemeyin
-- Amazon'un kullanım koşullarına uygun olarak kullanın
+- `scraper.py`: Ana program dosyası
+- `parser.py`: HTML analiz işlemleri
+- `amazon_selectors.py`: XPath seçicileri
+- `requirements.txt`: Bağımlılıklar
+- `data/`: HTML ve JSON çıktıları
 
-## Lisans
+## Not
 
-MIT License 
+Bu araç sadece eğitim amaçlıdır. Kullanmadan önce Amazon'un kullanım koşullarını kontrol edin. 
