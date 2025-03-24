@@ -15,6 +15,7 @@ def extract_product_data(html_file_path):
     # Tüm ürün kartlarını bul
     product_cards = tree.xpath(get_selector('product_card'))
     products = []
+    counter = 1  # Sayaç ekle
     
     for card in product_cards:
         try:
@@ -24,7 +25,12 @@ def extract_product_data(html_file_path):
             attributes = get_attributes('product_card')
             if attributes:
                 for key, attr in attributes.items():
-                    product[key] = card.get(attr, '')
+                    if key == 'index':
+                        # Sayaç değerini kullan
+                        product[key] = str(counter)
+                        counter += 1  # Sayacı artır
+                    else:
+                        product[key] = card.get(attr, '')
             
             # Organik sonuç mu?
             sponsored_elements = card.xpath('.//span[contains(text(), "Sponsored")]')

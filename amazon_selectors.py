@@ -6,7 +6,7 @@ SELECTORS = {
         "xpath": True,
         "attributes": {
             "asin": "data-asin",
-            "index": "data-index"
+            "index": "data-csa-c-pos"
         }
     },
     

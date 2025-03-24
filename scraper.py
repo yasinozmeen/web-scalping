@@ -49,7 +49,7 @@ async def main():
     try:
         async with async_playwright() as p:
             # Tarayıcıyı başlat
-            browser = await p.chromium.launch(headless=False)
+            browser = await p.chromium.launch(headless=True)
             page = await browser.new_page()
 
             # Amazon'a git
