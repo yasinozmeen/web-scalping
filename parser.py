@@ -1,78 +1,56 @@
 import json
 import os
-from amazon_selectors import get_selector, get_attributes, get_attribute
-from lxml import html
+from bs4 import BeautifulSoup
+import re
 
-def extract_product_data(html_file_path):
-    """HTML dosyasından ürün verilerini çeker"""
-    # HTML dosyasını oku
-    with open(html_file_path, 'r', encoding='utf-8') as file:
-        content = file.read()
+def extract_product_data(html_file):
+    with open(html_file, 'r', encoding='utf-8') as f:
+        content = f.read()
     
-    # lxml tree objesi oluştur
-    tree = html.fromstring(content)
-    
-    # Tüm ürün kartlarını bul
-    product_cards = tree.xpath(get_selector('product_card'))
+    soup = BeautifulSoup(content, 'html.parser')
     products = []
-    counter = 1  # Sayaç ekle
+    index_counter = 1  # Index'i 1'den başlatıyoruz
+    
+    # Ana ürün listesini bul
+    search_results = soup.find('div', {'class': 's-search-results'})
+    if not search_results:
+        return products
+
+    # Tüm ürün kartlarını bul
+    product_cards = search_results.find_all('div', {'data-asin': True})
     
     for card in product_cards:
-        try:
-            product = {}
-            
-            # ASIN ve Index
-            attributes = get_attributes('product_card')
-            if attributes:
-                for key, attr in attributes.items():
-                    if key == 'index':
-                        # Sayaç değerini kullan
-                        product[key] = str(counter)
-                        counter += 1  # Sayacı artır
-                    else:
-                        product[key] = card.get(attr, '')
-            
-            # Organik sonuç mu?
-            sponsored_elements = card.xpath('.//span[contains(text(), "Sponsored")]')
-            product['is_organic'] = len(sponsored_elements) == 0
-            
-            # ASIN zorunlu alan
-            if not product.get('asin'):
-                continue
-            
-            products.append(product)
-            
-        except Exception as e:
-            print(f"Ürün bilgileri analiz edilemedi: {str(e)}")
+        # ASIN kontrolü
+        if not card.get('data-asin'):
             continue
+
+        # Sponsorlu/Reklam kontrolü
+        sponsored_elem = card.find('span', string=lambda x: x and 'Sponsored' in str(x))
+        sponsored_class = card.find(class_=lambda x: x and 'sponsored' in str(x).lower())
+        
+        # Eğer sponsorlu değilse
+        if not sponsored_elem and not sponsored_class:
+            product = {
+                'asin': card['data-asin'],
+                'index': index_counter,  # Yeni index değeri
+                'is_organic': True
+            }
+            products.append(product)
+            index_counter += 1  # Her organik üründe index'i artır
     
     return products
 
 def analyze_products(products):
-    """Ürünlerin organik/sponsorlu dağılımını analiz eder"""
-    ranges = []
-    current_type = None
-    start_index = 0
+    if not products:
+        print("Ürün bulunamadı!")
+        return
     
-    for i, product in enumerate(products):
-        if current_type is None:
-            current_type = product['is_organic']
-            start_index = i
-        elif current_type != product['is_organic']:
-            ranges.append((start_index + 1, i + 1, current_type))
-            current_type = product['is_organic']
-            start_index = i
+    organic_count = sum(1 for p in products if p['is_organic'])
+    sponsored_count = len(products) - organic_count
     
-    # Son aralığı ekle
-    if start_index < len(products):
-        ranges.append((start_index + 1, len(products), current_type))
-    
-    # Sonuçları yazdır
-    for start, end, is_organic in ranges:
-        if end == start:
-            print(f"{start}. ürün {'' if is_organic else 'sponsorlu'} (is_organic: {str(is_organic).lower()})")
-        else:
-            print(f"{start}-{end} arası ürünler {'' if is_organic else 'sponsorlu'} (is_organic: {str(is_organic).lower()})")
+    print(f"\nToplam Ürün: {len(products)}")
+    print(f"Organik Ürün: {organic_count}")
+    print(f"Sponsored Ürün: {sponsored_count}")
 
 def main():
     """Ana fonksiyon"""
@@ -102,6 +80,13 @@ def main():
     sys.stdout.flush()
     analyze_products(products)
     print(f"\nAyrıntılı veriler {output_file} dosyasına kaydedildi.", flush=True)
+
+    print("\nİşlem Özeti:")
+    print(f"Süre: {end_time - start_time:.2f} saniye")
+    print(f"İnternet Kullanımı: {format_bytes(total_usage)}")
+    print(f"HTML Dosya Boyutu: {format_bytes(html_size)}")
+    print(f"Sadece Organik Ürün Sayısı: {len(products)} adet")
+    print(f"Dosya: {output_file}")
 
 def test_last_data():
     """En son indirilen HTML dosyasından analiz yapar"""
