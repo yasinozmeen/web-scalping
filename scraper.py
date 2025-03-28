@@ -1,274 +1,251 @@
-import os
-import asyncio
-from playwright.async_api import async_playwright, TimeoutError
-from datetime import datetime
-from parser import extract_product_data, analyze_products
-import argparse
-import json
 import time
-import psutil
-from bs4 import BeautifulSoup
+import json
+import random
+import argparse
+import os
+from dotenv import load_dotenv
+from playwright.sync_api import sync_playwright
 
-def get_network_usage():
-    net_io = psutil.net_io_counters()
+# .env dosyasını yükle
+load_dotenv()
+
+def random_sleep():
+    """Random bekleme süresi"""
+    time.sleep(random.uniform(2, 5))
+
+def get_all_variants(page, asin):
+    """Verilen ASIN'in tüm varyasyonlarını bulur"""
+    print(f"\n🔍 ASIN {asin} için varyasyonlar kontrol ediliyor...")
+    url = f"https://www.amazon.com/dp/{asin}"
+    print(f"📌 Detay URL: {url}")
+    
+    # Sayfaya git ve yüklenene kadar bekle
+    try:
+        page.goto(url, wait_until='domcontentloaded', timeout=60000)
+        random_sleep()
+        
+        # Bot korumasını aşmak için scroll
+        page.mouse.move(random.randint(100, 500), random.randint(100, 500))
+        page.mouse.wheel(delta_x=0, delta_y=random.randint(300, 700))
+        random_sleep()
+        
+        variants = set()
+        variants.add(asin)  # Mevcut ASIN'i ekle
+        
+        # JavaScript ile varyasyonları bul
+        script = """
+        () => {
+            const variants = new Set();
+            
+            // Script içindeki varyasyonları bul
+            const scripts = document.getElementsByTagName('script');
+            for (const script of scripts) {
+                const text = script.textContent || '';
+                if (text.includes('dimensionValuesDisplayData')) {
+                    const matches = text.match(/B[A-Z0-9]{9}/g) || [];
+                    matches.forEach(match => variants.add(match));
+                }
+            }
+            
+            // Varyasyon butonlarından ASIN'leri topla
+            document.querySelectorAll('[data-defaultasin]').forEach(el => {
+                const asin = el.getAttribute('data-defaultasin');
+                if (asin) variants.add(asin);
+            });
+            
+            // Parent ASIN'i bul
+            const parentElement = document.querySelector('[data-parent-asin]');
+            if (parentElement) {
+                const parentAsin = parentElement.getAttribute('data-parent-asin');
+                if (parentAsin) variants.add(parentAsin);
+            }
+            
+            return Array.from(variants);
+        }
+        """
+        
+        found_variants = page.evaluate(script) or []
+        if found_variants:
+            print("\n🔍 Varyasyonlar:")
+            for variant in found_variants:
+                if variant not in variants and len(variant) == 10 and variant.startswith('B'):
+                    print(f"   - {variant}")
+                    variants.add(variant)
+
+        variants = list(variants)
+        print(f"\n✅ Toplam {len(variants)} varyasyon bulundu")
+        return variants
+        
+    except Exception as e:
+        print(f"\n❌ Sayfa yükleme hatası: {str(e)}")
+        return [asin]
+
+def find_first_variant_position(playwright, browser_ws, keyword, variants):
+    """Verilen varyasyonlardan ilk bulunanın pozisyonunu döndürür"""
+    print(f"\n🔎 '{keyword}' aramasında {len(variants)} varyasyon aranıyor...")
+    
+    page_num = 1
+    total_position = 0
+    found_variant = None
+    found_data = None
+    
+    while page_num <= 10:  # İlk 10 sayfaya bakalım
+        try:
+            # Her sayfa için yeni bir bağlantı
+            print(f"\n🔄 Sayfa {page_num} için yeni bağlantı kuruluyor...")
+            browser = playwright.chromium.connect_over_cdp(browser_ws)
+            context = browser.new_context(
+                viewport={'width': 1920, 'height': 1080},
+                user_agent='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+            )
+            page = context.new_page()
+            
+            # Arama URL'ini oluştur
+            if page_num == 1:
+                url = f"https://www.amazon.com/s?k={keyword.replace(' ', '+')}"
+            else:
+                url = f"https://www.amazon.com/s?k={keyword.replace(' ', '+')}&page={page_num}"
+            
+            print(f"📄 Sayfa {page_num} kontrol ediliyor...")
+            print(f"📌 URL: {url}")
+            
+            # Sayfaya git ve yüklenene kadar bekle
+            page.goto(url, wait_until='domcontentloaded', timeout=60000)
+            random_sleep()
+            
+            # Bot korumasını aşmak için scroll
+            page.mouse.move(random.randint(100, 500), random.randint(100, 500))
+            page.mouse.wheel(delta_x=0, delta_y=random.randint(300, 700))
+            random_sleep()
+            
+            # JavaScript ile ürünleri ve pozisyonları bul
+            script = """
+                () => {
+                const products = [];
+                document.querySelectorAll('[data-asin]').forEach((el, index) => {
+                    const asin = el.getAttribute('data-asin');
+                    if (asin) {
+                        products.push({
+                            asin: asin,
+                            position: index + 1,
+                            sponsored: el.querySelector('[data-component-type="sp-sponsored-result"]') !== null
+                        });
+                    }
+                });
+                return products;
+            }
+            """
+            
+            products = page.evaluate(script)
+            
+            for product in products:
+                total_position += 1
+                if product['asin'] in variants:
+                    found_variant = product['asin']
+                    found_data = {
+                        'found': True,
+                        'found_variant': product['asin'],
+                        'page': page_num,
+                        'page_position': product['position'],
+                        'total_position': total_position,
+                        'sponsored': product['sponsored']
+                    }
+                    print(f"\n✅ Varyasyon bulundu: {product['asin']}")
+                    print(f"📊 Sayfa: {page_num}")
+                    print(f"📊 Sayfa içi pozisyon: {product['position']}")
+                    print(f"📊 Genel pozisyon: {total_position}")
+                    print(f"🏷️ Sponsorlu: {'Evet' if product['sponsored'] else 'Hayır'}")
+                    browser.close()
+                    return found_data
+            
+            if found_variant:
+                break
+                
+            # Bağlantıyı kapat
+            browser.close()
+            print(f"🔄 Sayfa {page_num} bağlantısı kapatıldı.")
+            
+            page_num += 1
+            random_sleep()
+            
+        except Exception as e:
+            print(f"\n❌ Sayfa {page_num} kontrol edilirken hata: {str(e)}")
+            if 'browser' in locals():
+                browser.close()
+                print(f"🔄 Hatalı bağlantı kapatıldı.")
+            page_num += 1
+            continue
+    
+    print("\n❌ Hiçbir varyasyon bulunamadı!")
     return {
-        'gönderilen': net_io.bytes_sent,
-        'alınan': net_io.bytes_recv,
-        'toplam': net_io.bytes_sent + net_io.bytes_recv
+        'found': False,
+        'found_variant': None,
+        'page': None,
+        'page_position': None,
+        'total_position': None,
+        'sponsored': None
     }
 
-def format_bytes(bytes):
-    for unit in ['B', 'KB', 'MB']:
-        if bytes < 1024:
-            return f"{bytes:.2f} {unit}"
-        bytes /= 1024
-    return f"{bytes:.2f} GB"
-
-def log_network_usage(start_usage, current_usage, step_name):
-    sent_diff = current_usage['gönderilen'] - start_usage['gönderilen']
-    recv_diff = current_usage['alınan'] - start_usage['alınan']
-    total_diff = current_usage['toplam'] - start_usage['toplam']
-    
-    print(f"\n{step_name} - Network Kullanımı:")
-    print(f"Gönderilen: {format_bytes(sent_diff)}")
-    print(f"Alınan: {format_bytes(recv_diff)}")
-    print(f"Toplam: {format_bytes(total_diff)}")
-
-def clean_html(content):
-    soup = BeautifulSoup(content, 'html.parser')
-    
-    # Ana ürün listesini bul
-    search_results = soup.find('div', {'class': 's-search-results'})
-    if search_results:
-        # Yeni temiz div oluştur
-        clean_results = soup.new_tag('div')
-        clean_results['class'] = 's-search-results'
-        
-        # Tüm ürün kartlarını bul
-        product_cards = search_results.find_all('div', {'data-asin': True})
-        index_counter = 1
-        
-        for card in product_cards:
-            # Sponsorlu/Reklam kontrolü
-            sponsored_elem = card.find('span', string=lambda x: x and 'Sponsored' in str(x))
-            sponsored_class = card.find(class_=lambda x: x and 'sponsored' in str(x).lower())
-            
-            # Eğer sponsorlu değilse
-            if not sponsored_elem and not sponsored_class and card.get('data-asin'):
-                # Kartın kopyasını al
-                clean_card = card
-                
-                # Önce gereksiz içerikleri temizle
-                for tag in clean_card.find_all(['script', 'style', 'iframe', 'noscript', 'svg']):
-                    tag.decompose()
-                
-                # Tüm resimleri kaldır
-                for img in clean_card.find_all('img'):
-                    img.decompose()
-                
-                # Video ve medya içeriklerini kaldır
-                for tag in clean_card.find_all(['video', 'audio', 'source', 'picture']):
-                    tag.decompose()
-                
-                # Gereksiz attributeları temizle
-                for tag in clean_card.find_all(True):
-                    # Korunacak attributelar
-                    keep_attrs = ['data-asin', 'data-component-type', 'class']
-                    
-                    # Mevcut attributeları kontrol et
-                    attrs = dict(tag.attrs)
-                    for attr in attrs:
-                        # Resim ve stil ile ilgili attributeları kaldır
-                        if attr not in keep_attrs:
-                            del tag[attr]
-                    
-                    # Class'ları temizle ama önemli olanları koru
-                    if tag.has_attr('class'):
-                        classes = tag.get('class', [])
-                        tag['class'] = [c for c in classes if c in ['a-price-whole', 'a-text-normal']]
-                
-                # Yeni index değerini ekle
-                clean_card['data-index'] = str(index_counter)
-                index_counter += 1
-                
-                clean_results.append(clean_card)
-        
-        # Boşlukları ve gereksiz karakterleri temizle
-        return str(clean_results).replace('\n', '').replace('  ', ' ')
-    return ""
-
-async def save_html_content(content, filename):
-    os.makedirs('data', exist_ok=True)
-    with open(filename, 'w', encoding='utf-8') as f:
-        f.write(content)
-    print(f"HTML içeriği kaydedildi: {filename}")
-
-async def wait_for_page_load(page):
-    """Sayfanın tam olarak yüklenmesini bekler"""
-    print("Sayfa yükleniyor...", flush=True)
-    try:
-        await page.wait_for_load_state("domcontentloaded", timeout=60000)
-        await page.wait_for_selector('[data-asin]', state="visible", timeout=60000)
-        await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-        await asyncio.sleep(3)
-        await page.evaluate("window.scrollTo(0, 0)")
-        await asyncio.sleep(1)
-        print("Sayfa tamamen yüklendi", flush=True)
-    except TimeoutError:
-        print("Sayfa yükleme zaman aşımı - mevcut içerikle devam ediliyor", flush=True)
-
-async def main():
-    start_time = time.time()
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--search', '-s', type=str, required=True)
+def main():
+    parser = argparse.ArgumentParser(description='Amazon ASIN Kontrol Aracı')
+    parser.add_argument('-k', '--keyword', required=True, help='Arama anahtar kelimesi')
+    parser.add_argument('-a', '--asin', required=True, help='Kontrol edilecek ASIN')
     args = parser.parse_args()
     
-    start_network_usage = get_network_usage()
-    step_network_usage = start_network_usage.copy()
+    # Bright Data bilgilerini al
+    bright_data_auth = os.getenv('BRIGHT_DATA_AUTH')
+    bright_data_host = os.getenv('BRIGHT_DATA_HOST')
+    bright_data_port = int(os.getenv('BRIGHT_DATA_PORT'))
     
-    # Bright Data bilgileri
-    username = "brd-customer-hl_b2cfbf43-zone-scraping_browser1"
-    password = "c7liyhvlkal7"
-    host = "brd.superproxy.io"
-    port = "9222"
-
+    # Bright Data WebSocket URL'ini oluştur
+    browser_ws = f"wss://{bright_data_auth}@{bright_data_host}:{bright_data_port}"
+    print(f"\n🌐 Bright Data Scraping Browser'a bağlanılıyor...")
+    print(f"📍 WebSocket URL: {browser_ws}")
+    
+with sync_playwright() as p:
     try:
-        async with async_playwright() as p:
-            print("Scraping başlatılıyor...", flush=True)
-            
-            # Browser başlatma öncesi network kullanımı
-            current_usage = get_network_usage()
-            log_network_usage(step_network_usage, current_usage, "Browser Başlatma Öncesi")
-            step_network_usage = current_usage.copy()
-            
-            session_id = f"session_{int(time.time())}"
-            ws_url = f"wss://{username}-session-{session_id}:{password}@{host}:{port}"
-            
-            browser = await p.chromium.connect_over_cdp(
-                ws_url,
-                timeout=60000,
+            # Varyasyonları bulmak için ilk bağlantı
+            print("\n🔄 Varyasyonlar için bağlantı kuruluyor...")
+            browser = p.chromium.connect_over_cdp(browser_ws)
+            context = browser.new_context(
+                viewport={'width': 1920, 'height': 1080},
+                user_agent='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
             )
-
-            # Browser başlatma sonrası network kullanımı
-            current_usage = get_network_usage()
-            log_network_usage(step_network_usage, current_usage, "Browser Başlatma")
-            step_network_usage = current_usage.copy()
-
-            context = await browser.new_context(
-                viewport={'width': 1366, 'height': 768}
-            )
-
-            # Gereksiz içerikleri engelle
-            await context.route("**/*", lambda route: route.continue_() if route.request.resource_type == "document" else route.abort())
-
-            page = await context.new_page()
-
-            # Direkt arama URL'ine git (.com'a geçtik)
-            search_url = f"https://www.amazon.com/s?k={args.search}&ref=sr_pg_1"
+            page = context.new_page()
             
-            # Sadece HTML yükle
-            response = await page.goto(
-                search_url,
-                timeout=60000,
-                wait_until='domcontentloaded'
-            )
-
-            # Sadece s-search-results div'ini seç ve al
-            content = await page.evaluate("""
-                () => {
-                    const results = document.querySelector('div.s-search-results');
-                    if (!results) return '';
-                    
-                    // Sadece gerekli yapıyı kopyala
-                    const clean = results.cloneNode(true);
-                    
-                    // Tüm medya içeriklerini kaldır
-                    clean.querySelectorAll('img,svg,video,iframe,style,script').forEach(el => el.remove());
-                    
-                    // Sponsorlu içerikleri kaldır
-                    clean.querySelectorAll('[data-component-type="sp-sponsored-result"]').forEach(el => el.remove());
-                    
-                    // Sadece gerekli attributeları tut
-                    clean.querySelectorAll('*').forEach(el => {
-                        const keepAttrs = ['data-asin', 'data-component-type', 'class'];
-                        Array.from(el.attributes).forEach(attr => {
-                            if (!keepAttrs.includes(attr.name)) {
-                                el.removeAttribute(attr.name);
-                            }
-                        });
-                        
-                        // Class'ları da temizle
-                        if (el.hasAttribute('class')) {
-                            const classes = el.getAttribute('class').split(' ');
-                            const keepClasses = ['s-search-results', 'a-price-whole', 'a-text-normal'];
-                            el.setAttribute('class', classes.filter(c => keepClasses.includes(c)).join(' '));
-                            if (!el.getAttribute('class')) el.removeAttribute('class');
-                        }
-                    });
-                    
-                    // Boş elementleri kaldır
-                    clean.querySelectorAll('*').forEach(el => {
-                        if (!el.children.length && !el.textContent.trim()) {
-                            el.remove();
-                        }
-                    });
-                    
-                    return clean.outerHTML;
-                }
-            """)
+            # Tüm varyasyonları bul
+            variants = get_all_variants(page, args.asin)
             
-            # Gereksiz boşlukları ve satır sonlarını kaldır
-            content = ' '.join(content.split())
-            content = content.replace('> <', '><')
+            # İlk bağlantıyı kapat
+            browser.close()
+            print("\n🔄 İlk bağlantı kapatıldı.")
             
-            # İçerik alma sonrası network kullanımı
-            current_usage = get_network_usage()
-            log_network_usage(step_network_usage, current_usage, "İçerik Alma")
-            step_network_usage = current_usage.copy()
-
-            # HTML'i temizle ve kaydet
-            clean_content = clean_html(content)
+            # Arama için yeni bağlantı
+            print("\n🔄 Arama için yeni bağlantı kuruluyor...")
+            browser = p.chromium.connect_over_cdp(browser_ws)
             
-            timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
-            html_filename = f'data/amazon_{args.search}_search_page_{timestamp}.html'
+            # Varyasyonlardan herhangi birini bulmaya çalış
+            result = find_first_variant_position(p, browser_ws, args.keyword, variants)
             
-            os.makedirs('data', exist_ok=True)
-            with open(html_filename, 'w', encoding='utf-8') as f:
-                f.write(clean_content)
-
-            products = extract_product_data(html_filename)
+            # Sonuçları JSON formatında kaydet
+            output = {
+                'keyword': args.keyword,
+                'original_asin': args.asin,
+                'all_variants': variants,
+                'search_results': result
+            }
             
-            json_filename = f'data/amazon_{args.search}_products_{timestamp}.json'
-            with open(json_filename, 'w', encoding='utf-8') as f:
-                json.dump(products, f, ensure_ascii=False, indent=2)
-
-            html_size = os.path.getsize(html_filename)
-            end_network_usage = get_network_usage()
-            total_usage = end_network_usage['toplam'] - start_network_usage['toplam']
-            end_time = time.time()
+            with open('asin_results.json', 'w') as f:
+                json.dump(output, f, indent=2)
+                print("\n💾 Sonuçlar 'asin_results.json' dosyasına kaydedildi.")
             
-            print("\nİşlem Özeti:")
-            print(f"Süre: {end_time - start_time:.2f} saniye")
-            print(f"İnternet Kullanımı: {format_bytes(total_usage)}")
-            print(f"HTML Dosya Boyutu: {format_bytes(html_size)}")
-            print(f"Organik Ürün Sayısı: {len(products)} adet")
-            print(f"Dosya: {json_filename}")
-
-            # Final network kullanımı
-            end_network_usage = get_network_usage()
-            print("\nToplam Network Kullanımı:")
-            print(f"Başlangıç: {format_bytes(start_network_usage['toplam'])}")
-            print(f"Bitiş: {format_bytes(end_network_usage['toplam'])}")
-            print(f"Fark: {format_bytes(end_network_usage['toplam'] - start_network_usage['toplam'])}")
-            
-            print("\nDetaylı Network Kullanımı:")
-            print(f"Toplam Gönderilen: {format_bytes(end_network_usage['gönderilen'] - start_network_usage['gönderilen'])}")
-            print(f"Toplam Alınan: {format_bytes(end_network_usage['alınan'] - start_network_usage['alınan'])}")
-
-            await browser.close()
+            # Son bağlantıyı kapat
+            browser.close()
 
     except Exception as e:
-        print(f"Hata: {str(e)}", flush=True)
+            print(f"\n❌ Genel Hata: {str(e)}")
+            if 'browser' in locals():
+                browser.close()
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
