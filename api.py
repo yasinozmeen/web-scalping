@@ -4,105 +4,106 @@ from pydantic import BaseModel
 import uvicorn
 from database import Database
 from scraper_queue import ScraperQueue
-import logging
-import sys
-from contextlib import asynccontextmanager
+from utils import setup_logger
 
-# Logging ayarları
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(sys.stdout),
-        logging.FileHandler('api.log')
-    ]
-)
-logger = logging.getLogger(__name__)
+# Logging yapılandırması
+logger = setup_logger('api')
 
-# Global değişkenler
-db = None
-queue = None
+app = FastAPI(title="Amazon Scraper API")
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    # Startup
-    global db, queue
-    logger.info("🚀 API başlatılıyor...")
-    db = Database()
-    queue = ScraperQueue()
-    await queue.start_workers()
-    logger.info("✅ API başlatıldı")
-    yield
-    # Shutdown
-    logger.info("🛑 API kapatılıyor...")
-    await queue.stop_workers()
-    logger.info("✅ API kapatıldı")
-
-app = FastAPI(title="Amazon Scraper API", lifespan=lifespan)
+# Veritabanı ve kuyruk örnekleri
+db = Database()
+queue = ScraperQueue()
 
 class ScrapeRequest(BaseModel):
     asin: str
     keyword: str
 
+@app.on_event("startup")
+async def startup_event():
+    """API başlatıldığında worker'ları başlat"""
+    try:
+        logger.info("API başlatılıyor...")
+        await queue.start_workers()
+        logger.info("API başlatıldı")
+    except Exception as e:
+        logger.error(f"API başlatılırken hata: {str(e)}")
+        raise
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """API kapatıldığında worker'ları durdur"""
+    try:
+        logger.info("API kapatılıyor...")
+        await queue.stop_workers()
+        logger.info("API kapatıldı")
+    except Exception as e:
+        logger.error(f"API kapatılırken hata: {str(e)}")
+        raise
+
 @app.post("/scrape")
 async def scrape_product(request: ScrapeRequest):
-    """Ürün scraping isteği al"""
+    """Yeni bir scraping görevi ekle"""
     try:
-        logger.info(f"📥 Yeni istek: ASIN={request.asin}, Keyword={request.keyword}")
+        # ASIN kontrolü
+        if not request.asin or len(request.asin) < 10:
+            raise HTTPException(status_code=400, detail="Geçersiz ASIN")
         
-        # Mevcut sonucu kontrol et
-        result = await db.get_result(request.asin)
-        if result:
-            logger.info(f"✅ Mevcut sonuç bulundu: {result}")
-            return {"message": "Sonuç zaten mevcut", "status": "completed", "result": result}
+        # Keyword kontrolü
+        if not request.keyword or len(request.keyword) < 2:
+            raise HTTPException(status_code=400, detail="Geçersiz anahtar kelime")
         
-        # Yeni scraping görevi ekle
+        # Veritabanında sonuç var mı kontrol et
+        existing_result = await db.get_result(request.asin)
+        if existing_result:
+            logger.info(f"Sonuç zaten mevcut - ASIN: {request.asin}")
+            return {"status": "completed", "result": existing_result}
+        
+        # Kuyruğa ekle
         await queue.add_task(request.asin, request.keyword)
-        logger.info(f"✅ Yeni görev eklendi: ASIN={request.asin}")
-        return {"message": "İşlem kuyruğa eklendi", "status": "pending", "asin": request.asin}
+        logger.info(f"Görev kuyruğa eklendi - ASIN: {request.asin}")
         
+        return {
+            "status": "pending",
+            "message": "Görev kuyruğa eklendi",
+            "asin": request.asin
+        }
+        
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"❌ Scraping hatası: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"500: İşlem hatası - {str(e)}")
+        logger.error(f"Scraping görevi eklenirken hata: {str(e)}")
+        raise HTTPException(status_code=500, detail="Sunucu hatası")
 
 @app.get("/result/{asin}")
 async def get_result(asin: str):
-    """ASIN için sonucu getir"""
+    """ASIN için sonuçları getir"""
     try:
-        logger.info(f"🔍 Sonuç aranıyor: ASIN={asin}")
         result = await db.get_result(asin)
         if not result:
-            logger.warning(f"❌ Sonuç bulunamadı: ASIN={asin}")
-            raise HTTPException(status_code=404, detail="404: Sonuç bulunamadı")
-            
-        logger.info(f"✅ Sonuç bulundu: {result}")
+            logger.warning(f"Sonuç bulunamadı - ASIN: {asin}")
+            raise HTTPException(status_code=404, detail="Sonuç bulunamadı")
+        
+        logger.info(f"Sonuç getirildi - ASIN: {asin}")
         return result
         
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"❌ Sonuç getirme hatası: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"500: İşlem hatası - {str(e)}")
+        logger.error(f"Sonuç getirilirken hata: {str(e)}")
+        raise HTTPException(status_code=500, detail="Sunucu hatası")
 
 @app.get("/stats")
 async def get_stats():
     """İstatistikleri getir"""
     try:
-        logger.info("📊 İstatistikler istendi")
         stats = await db.get_stats()
-        logger.info(f"✅ İstatistikler alındı: {stats}")
+        logger.info("İstatistikler getirildi")
         return stats
         
     except Exception as e:
-        logger.error(f"❌ İstatistik hatası: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"500: İşlem hatası - {str(e)}")
+        logger.error(f"İstatistikler getirilirken hata: {str(e)}")
+        raise HTTPException(status_code=500, detail="Sunucu hatası")
 
 if __name__ == "__main__":
-    try:
-        logger.info("🚀 API başlatılıyor...")
-        uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
-    except KeyboardInterrupt:
-        logger.info("👋 API kapatılıyor...")
-    except Exception as e:
-        logger.error(f"❌ API hatası: {str(e)}", exc_info=True)
-        sys.exit(1) 
+    uvicorn.run(app, host="0.0.0.0", port=8000) 
