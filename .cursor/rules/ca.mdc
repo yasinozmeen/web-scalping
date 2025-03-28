@@ -3,6 +3,11 @@ description:
 globs: 
 alwaysApply: false
 ---
+---
+description: 
+globs: 
+alwaysApply: false
+---
 # Commit Mesajı ve Değişiklik Analizi Kuralları
 
 ## Notlar
@@ -35,6 +40,7 @@ Teknik Detaylar:
 - Performans İyileştirmeleri: Yapılan optimizasyonlar ve beklenen etkileri
 - Test Değişiklikleri: Eklenen veya güncellenen test senaryoları
 - Güvenlik İyileştirmeleri: Güvenlik amaçlı yapılan düzenlemeler ve beklenen katkıları
+
 ```
 
 ## Örnek Kullanım
