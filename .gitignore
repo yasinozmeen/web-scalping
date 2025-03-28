@@ -37,6 +37,7 @@ wheels/
 .vscode/
 *.swp
 *.swo
+ca.mdc
 
 # OS
 .DS_Store
@@ -45,4 +46,3 @@ wheels/
 .Spotlight-V100
 .Trashes
 ehthumbs.db
-Thumbs.db

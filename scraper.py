@@ -4,7 +4,8 @@ import random
 import argparse
 import os
 from dotenv import load_dotenv
-from playwright.sync_api import sync_playwright
+import requests
+from bs4 import BeautifulSoup
 
 # .env dosyasını yükle
 load_dotenv()
@@ -13,74 +14,77 @@ def random_sleep():
     """Random bekleme süresi"""
     time.sleep(random.uniform(2, 5))
 
-def get_all_variants(page, asin):
+def get_scraper_session(api_key):
+    """ScraperAPI için session oluştur"""
+    session = requests.Session()
+    return session
+
+def scrape_url(session, url, api_key):
+    """ScraperAPI ile URL'i çek"""
+    scraper_url = 'http://api.scraperapi.com'
+    params = {
+        'api_key': api_key,
+        'url': url,
+        'render': 'true'
+    }
+    print(f"\n🔄 ScraperAPI isteği yapılıyor...")
+    print(f"📍 URL: {url}")
+    response = session.get(scraper_url, params=params)
+    print(f"📊 Durum Kodu: {response.status_code}")
+    return response
+
+def get_all_variants(session, api_key, asin):
     """Verilen ASIN'in tüm varyasyonlarını bulur"""
     print(f"\n🔍 ASIN {asin} için varyasyonlar kontrol ediliyor...")
     url = f"https://www.amazon.com/dp/{asin}"
-    print(f"📌 Detay URL: {url}")
     
-    # Sayfaya git ve yüklenene kadar bekle
     try:
-        page.goto(url, wait_until='domcontentloaded', timeout=60000)
-        random_sleep()
-        
-        # Bot korumasını aşmak için scroll
-        page.mouse.move(random.randint(100, 500), random.randint(100, 500))
-        page.mouse.wheel(delta_x=0, delta_y=random.randint(300, 700))
-        random_sleep()
-        
+        # ScraperAPI ile sayfayı çek
+        response = scrape_url(session, url, api_key)
+        if response.status_code != 200:
+            print(f"\n❌ Sayfa çekme hatası: {response.status_code}")
+            return [asin]
+            
+        soup = BeautifulSoup(response.text, 'lxml')
         variants = set()
         variants.add(asin)  # Mevcut ASIN'i ekle
         
-        # JavaScript ile varyasyonları bul
-        script = """
-        () => {
-            const variants = new Set();
-            
-            // Script içindeki varyasyonları bul
-            const scripts = document.getElementsByTagName('script');
-            for (const script of scripts) {
-                const text = script.textContent || '';
-                if (text.includes('dimensionValuesDisplayData')) {
-                    const matches = text.match(/B[A-Z0-9]{9}/g) || [];
-                    matches.forEach(match => variants.add(match));
-                }
-            }
-            
-            // Varyasyon butonlarından ASIN'leri topla
-            document.querySelectorAll('[data-defaultasin]').forEach(el => {
-                const asin = el.getAttribute('data-defaultasin');
-                if (asin) variants.add(asin);
-            });
-            
-            // Parent ASIN'i bul
-            const parentElement = document.querySelector('[data-parent-asin]');
-            if (parentElement) {
-                const parentAsin = parentElement.getAttribute('data-parent-asin');
-                if (parentAsin) variants.add(parentAsin);
-            }
-            
-            return Array.from(variants);
-        }
-        """
+        # Script içindeki varyasyonları bul
+        for script in soup.find_all('script'):
+            text = script.string or ''
+            if 'dimensionValuesDisplayData' in text:
+                import re
+                matches = re.findall(r'B[A-Z0-9]{9}', text)
+                for match in matches:
+                    variants.add(match)
         
-        found_variants = page.evaluate(script) or []
-        if found_variants:
-            print("\n🔍 Varyasyonlar:")
-            for variant in found_variants:
-                if variant not in variants and len(variant) == 10 and variant.startswith('B'):
-                    print(f"   - {variant}")
-                    variants.add(variant)
-
-        variants = list(variants)
+        # Varyasyon butonlarından ASIN'leri topla
+        for element in soup.find_all(attrs={'data-defaultasin': True}):
+            variant_asin = element.get('data-defaultasin')
+            if variant_asin:
+                variants.add(variant_asin)
+        
+        # Parent ASIN'i bul
+        parent_element = soup.find(attrs={'data-parent-asin': True})
+        if parent_element:
+            parent_asin = parent_element.get('data-parent-asin')
+            if parent_asin:
+                variants.add(parent_asin)
+        
+        variants = list(filter(lambda x: len(x) == 10 and x.startswith('B'), variants))
         print(f"\n✅ Toplam {len(variants)} varyasyon bulundu")
+        if variants:
+            print("\n🔍 Varyasyonlar:")
+            for variant in variants:
+                print(f"   - {variant}")
+                
         return variants
         
     except Exception as e:
-        print(f"\n❌ Sayfa yükleme hatası: {str(e)}")
+        print(f"\n❌ Sayfa işleme hatası: {str(e)}")
         return [asin]
 
-def find_first_variant_position(playwright, browser_ws, keyword, variants):
+def find_first_variant_position(session, api_key, keyword, variants):
     """Verilen varyasyonlardan ilk bulunanın pozisyonunu döndürür"""
     print(f"\n🔎 '{keyword}' aramasında {len(variants)} varyasyon aranıyor...")
     
@@ -91,52 +95,36 @@ def find_first_variant_position(playwright, browser_ws, keyword, variants):
     
     while page_num <= 10:  # İlk 10 sayfaya bakalım
         try:
-            # Her sayfa için yeni bir bağlantı
-            print(f"\n🔄 Sayfa {page_num} için yeni bağlantı kuruluyor...")
-            browser = playwright.chromium.connect_over_cdp(browser_ws)
-            context = browser.new_context(
-                viewport={'width': 1920, 'height': 1080},
-                user_agent='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
-            )
-            page = context.new_page()
-            
             # Arama URL'ini oluştur
             if page_num == 1:
                 url = f"https://www.amazon.com/s?k={keyword.replace(' ', '+')}"
             else:
                 url = f"https://www.amazon.com/s?k={keyword.replace(' ', '+')}&page={page_num}"
             
-            print(f"📄 Sayfa {page_num} kontrol ediliyor...")
-            print(f"📌 URL: {url}")
+            print(f"\n📄 Sayfa {page_num} kontrol ediliyor...")
             
-            # Sayfaya git ve yüklenene kadar bekle
-            page.goto(url, wait_until='domcontentloaded', timeout=60000)
-            random_sleep()
+            # ScraperAPI ile sayfayı çek
+            response = scrape_url(session, url, api_key)
+            if response.status_code != 200:
+                print(f"\n❌ Sayfa çekme hatası: {response.status_code}")
+                page_num += 1
+                continue
+                
+            soup = BeautifulSoup(response.text, 'lxml')
+            products = []
             
-            # Bot korumasını aşmak için scroll
-            page.mouse.move(random.randint(100, 500), random.randint(100, 500))
-            page.mouse.wheel(delta_x=0, delta_y=random.randint(300, 700))
-            random_sleep()
+            # Ürünleri bul
+            for index, element in enumerate(soup.find_all(attrs={'data-asin': True}), 1):
+                asin = element.get('data-asin')
+                if asin:
+                    sponsored = bool(element.find(attrs={'data-component-type': 'sp-sponsored-result'}))
+                    products.append({
+                        'asin': asin,
+                        'position': index,
+                        'sponsored': sponsored
+                    })
             
-            # JavaScript ile ürünleri ve pozisyonları bul
-            script = """
-                () => {
-                const products = [];
-                document.querySelectorAll('[data-asin]').forEach((el, index) => {
-                    const asin = el.getAttribute('data-asin');
-                    if (asin) {
-                        products.push({
-                            asin: asin,
-                            position: index + 1,
-                            sponsored: el.querySelector('[data-component-type="sp-sponsored-result"]') !== null
-                        });
-                    }
-                });
-                return products;
-            }
-            """
-            
-            products = page.evaluate(script)
+            print(f"📊 Bu sayfada {len(products)} ürün bulundu")
             
             for product in products:
                 total_position += 1
@@ -155,24 +143,16 @@ def find_first_variant_position(playwright, browser_ws, keyword, variants):
                     print(f"📊 Sayfa içi pozisyon: {product['position']}")
                     print(f"📊 Genel pozisyon: {total_position}")
                     print(f"🏷️ Sponsorlu: {'Evet' if product['sponsored'] else 'Hayır'}")
-                    browser.close()
                     return found_data
             
             if found_variant:
                 break
                 
-            # Bağlantıyı kapat
-            browser.close()
-            print(f"🔄 Sayfa {page_num} bağlantısı kapatıldı.")
-            
             page_num += 1
             random_sleep()
             
         except Exception as e:
             print(f"\n❌ Sayfa {page_num} kontrol edilirken hata: {str(e)}")
-            if 'browser' in locals():
-                browser.close()
-                print(f"🔄 Hatalı bağlantı kapatıldı.")
             page_num += 1
             continue
     
@@ -186,66 +166,104 @@ def find_first_variant_position(playwright, browser_ws, keyword, variants):
         'sponsored': None
     }
 
-def main():
-    parser = argparse.ArgumentParser(description='Amazon ASIN Kontrol Aracı')
-    parser.add_argument('-k', '--keyword', required=True, help='Arama anahtar kelimesi')
-    parser.add_argument('-a', '--asin', required=True, help='Kontrol edilecek ASIN')
-    args = parser.parse_args()
+def process_asin(session, api_key, asin, title):
+    """Tek bir ASIN'i işle"""
+    print(f"\n{'='*50}")
+    print(f"📦 ASIN: {asin}")
+    print(f"📝 Başlık: {title}")
+    print(f"{'='*50}")
     
-    # Bright Data bilgilerini al
-    bright_data_auth = os.getenv('BRIGHT_DATA_AUTH')
-    bright_data_host = os.getenv('BRIGHT_DATA_HOST')
-    bright_data_port = int(os.getenv('BRIGHT_DATA_PORT'))
-    
-    # Bright Data WebSocket URL'ini oluştur
-    browser_ws = f"wss://{bright_data_auth}@{bright_data_host}:{bright_data_port}"
-    print(f"\n🌐 Bright Data Scraping Browser'a bağlanılıyor...")
-    print(f"📍 WebSocket URL: {browser_ws}")
-    
-with sync_playwright() as p:
     try:
-            # Varyasyonları bulmak için ilk bağlantı
-            print("\n🔄 Varyasyonlar için bağlantı kuruluyor...")
-            browser = p.chromium.connect_over_cdp(browser_ws)
-            context = browser.new_context(
-                viewport={'width': 1920, 'height': 1080},
-                user_agent='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
-            )
-            page = context.new_page()
+        # Varyasyonları bul
+        variants = get_all_variants(session, api_key, asin)
+        
+        if variants:
+            # İlk bulunan varyasyonun pozisyonunu bul
+            result = find_first_variant_position(session, api_key, title, variants)
             
-            # Tüm varyasyonları bul
-            variants = get_all_variants(page, args.asin)
+            # Sonuçları kaydet
+            result['asin'] = asin
+            result['title'] = title
             
-            # İlk bağlantıyı kapat
-            browser.close()
-            print("\n🔄 İlk bağlantı kapatıldı.")
-            
-            # Arama için yeni bağlantı
-            print("\n🔄 Arama için yeni bağlantı kuruluyor...")
-            browser = p.chromium.connect_over_cdp(browser_ws)
-            
-            # Varyasyonlardan herhangi birini bulmaya çalış
-            result = find_first_variant_position(p, browser_ws, args.keyword, variants)
-            
-            # Sonuçları JSON formatında kaydet
-            output = {
-                'keyword': args.keyword,
-                'original_asin': args.asin,
-                'all_variants': variants,
-                'search_results': result
-            }
-            
-            with open('asin_results.json', 'w') as f:
-                json.dump(output, f, indent=2)
-                print("\n💾 Sonuçlar 'asin_results.json' dosyasına kaydedildi.")
-            
-            # Son bağlantıyı kapat
-            browser.close()
-
+            return result
+        
     except Exception as e:
-            print(f"\n❌ Genel Hata: {str(e)}")
-            if 'browser' in locals():
-                browser.close()
+        print(f"\n❌ Genel hata: {str(e)}")
+        return {
+            'asin': asin,
+            'title': title,
+            'error': str(e)
+        }
+
+def main():
+    # Komut satırı argümanlarını parse et
+    parser = argparse.ArgumentParser(description='Amazon ASIN Scraper')
+    parser.add_argument('-a', '--asin', help='Tek bir ASIN için arama yap')
+    parser.add_argument('-k', '--keyword', help='Arama kelimesi')
+    args = parser.parse_args()
+
+    # .env dosyasından API anahtarını al
+    load_dotenv()
+    api_key = os.getenv('SCRAPER_API_KEY')
+    if not api_key:
+        print("❌ SCRAPER_API_KEY bulunamadı!")
+        return
+
+    print(f"\n🔑 API Anahtarı: {api_key}\n")
+
+    # Session oluştur
+    session = get_scraper_session(api_key)
+
+    # Tek ASIN için arama yapılıyorsa
+    if args.asin and args.keyword:
+        print(f"\n==================================================")
+        print(f"📦 ASIN: {args.asin}")
+        print(f"📝 Başlık: {args.keyword}")
+        print(f"==================================================\n")
+        
+        result = process_asin(session, api_key, args.asin, args.keyword)
+        if result:
+            print("\n✅ Sonuçlar asin_results.json dosyasına kaydedildi.")
+        return
+
+    # Tüm ASIN'ler için arama yap
+    asins = [
+        ("B0DQYQKZQ2", "bounty paper towels"),
+        ("B0DF8RSVJK", "scott paper towels"),
+        ("B0DNTQ2YNT", "storage organizer"),
+        ("B0DN8C9MTN", "paper bowls"),
+        ("B0DLT4GBST", "jello shot cups"),
+        ("B0DP2D8ZJT", "air fryer liners"),
+        ("B0DSJW8SFG", "ice cream maker"),
+        ("B0DRS9YN56", "espresso machine"),
+        ("B0DRTR6F12", "coffee pods"),
+        ("B0DTJR3HTL", "cream maker pints")
+    ]
+
+    results = []
+    for i, (asin, title) in enumerate(asins, 1):
+        print(f"\n==================================================")
+        print(f"📦 ASIN: {asin}")
+        print(f"📝 Başlık: {title}")
+        print(f"==================================================\n")
+        
+        result = process_asin(session, api_key, asin, title)
+        if result:
+            results.append(result)
+            
+            # Her 5 ASIN'de bir sonuçları kaydet
+            if i % 5 == 0:
+                save_results(results)
+                print(f"\n✅ {i} ASIN için sonuçlar kaydedildi.")
+                results = []  # Sonuçları temizle
+                
+        # Her ASIN arasında 2-5 saniye bekle
+        time.sleep(random.uniform(2, 5))
+    
+    # Kalan sonuçları kaydet
+    if results:
+        save_results(results)
+        print(f"\n✅ Kalan sonuçlar kaydedildi.")
 
 if __name__ == "__main__":
     main()
