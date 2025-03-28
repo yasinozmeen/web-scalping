@@ -1,55 +1,79 @@
-import time
+import asyncio
+import aiohttp
+from bs4 import BeautifulSoup
 import json
-import random
-import argparse
 import os
 from dotenv import load_dotenv
-import requests
-from bs4 import BeautifulSoup
+import argparse
+from typing import Dict, Optional, Tuple, List
+import random
+import logging
+
+# Logging ayarları
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler('scraper.log')
+    ]
+)
+logger = logging.getLogger(__name__)
 
 # .env dosyasını yükle
 load_dotenv()
+API_KEY = os.getenv('SCRAPER_API_KEY')
 
-def random_sleep():
-    """Random bekleme süresi"""
-    time.sleep(random.uniform(2, 5))
+if not API_KEY:
+    raise ValueError("SCRAPER_API_KEY bulunamadı!")
 
-def get_scraper_session(api_key):
-    """ScraperAPI için session oluştur"""
-    session = requests.Session()
-    return session
+async def random_sleep_async():
+    """Asenkron random bekleme"""
+    sleep_time = random.uniform(2, 5)
+    logger.debug(f"💤 {sleep_time:.2f} saniye bekleniyor...")
+    await asyncio.sleep(sleep_time)
 
-def scrape_url(session, url, api_key):
-    """ScraperAPI ile URL'i çek"""
-    scraper_url = 'http://api.scraperapi.com'
+async def scrape_url_async(url: str) -> Tuple[int, str]:
+    """URL'yi asenkron olarak scrape et"""
     params = {
-        'api_key': api_key,
+        'api_key': API_KEY,
         'url': url,
-        'render': 'true'
+        'country_code': 'us',
+        'device_type': 'desktop',
+        'render_js': '0',
+        'timeout': '60000',
+        'keep_headers': 'true',
+        'premium': 'true'
     }
-    print(f"\n🔄 ScraperAPI isteği yapılıyor...")
-    print(f"📍 URL: {url}")
-    response = session.get(scraper_url, params=params)
-    print(f"📊 Durum Kodu: {response.status_code}")
-    return response
+    
+    try:
+        logger.info(f"🌐 URL scrape ediliyor: {url}")
+        async with aiohttp.ClientSession() as session:
+            async with session.get('http://api.scraperapi.com', params=params) as response:
+                text = await response.text()
+                logger.info(f"✅ URL scrape edildi: {url}, Status={response.status}")
+                return response.status, text
+    except Exception as e:
+        logger.error(f"❌ Scraping hatası: URL={url}, Hata={str(e)}", exc_info=True)
+        return 500, ""
 
-def get_all_variants(session, api_key, asin):
-    """Verilen ASIN'in tüm varyasyonlarını bulur"""
-    print(f"\n🔍 ASIN {asin} için varyasyonlar kontrol ediliyor...")
+async def get_variants_async(asin: str) -> List[str]:
+    """ASIN'in varyasyonlarını asenkron olarak getir"""
+    logger.info(f"🔍 ASIN {asin} için varyasyonlar kontrol ediliyor...")
     url = f"https://www.amazon.com/dp/{asin}"
     
     try:
-        # ScraperAPI ile sayfayı çek
-        response = scrape_url(session, url, api_key)
-        if response.status_code != 200:
-            print(f"\n❌ Sayfa çekme hatası: {response.status_code}")
+        status, html = await scrape_url_async(url)
+        if status != 200:
+            logger.error(f"❌ Sayfa çekme hatası: Status={status}, ASIN={asin}")
             return [asin]
             
-        soup = BeautifulSoup(response.text, 'lxml')
+        soup = BeautifulSoup(html, 'lxml')
         variants = set()
         variants.add(asin)  # Mevcut ASIN'i ekle
         
         # Script içindeki varyasyonları bul
+        logger.debug("🔍 Script içinde varyasyonlar aranıyor...")
         for script in soup.find_all('script'):
             text = script.string or ''
             if 'dimensionValuesDisplayData' in text:
@@ -59,12 +83,14 @@ def get_all_variants(session, api_key, asin):
                     variants.add(match)
         
         # Varyasyon butonlarından ASIN'leri topla
+        logger.debug("🔍 Varyasyon butonlarında ASIN'ler aranıyor...")
         for element in soup.find_all(attrs={'data-defaultasin': True}):
             variant_asin = element.get('data-defaultasin')
             if variant_asin:
                 variants.add(variant_asin)
         
         # Parent ASIN'i bul
+        logger.debug("🔍 Parent ASIN aranıyor...")
         parent_element = soup.find(attrs={'data-parent-asin': True})
         if parent_element:
             parent_asin = parent_element.get('data-parent-asin')
@@ -72,21 +98,21 @@ def get_all_variants(session, api_key, asin):
                 variants.add(parent_asin)
         
         variants = list(filter(lambda x: len(x) == 10 and x.startswith('B'), variants))
-        print(f"\n✅ Toplam {len(variants)} varyasyon bulundu")
+        logger.info(f"✅ Toplam {len(variants)} varyasyon bulundu")
         if variants:
-            print("\n🔍 Varyasyonlar:")
+            logger.info("📋 Varyasyonlar:")
             for variant in variants:
-                print(f"   - {variant}")
+                logger.info(f"   - {variant}")
                 
-        return variants
+        return list(variants)
         
     except Exception as e:
-        print(f"\n❌ Sayfa işleme hatası: {str(e)}")
+        logger.error(f"❌ Sayfa işleme hatası: ASIN={asin}, Hata={str(e)}", exc_info=True)
         return [asin]
 
-def find_first_variant_position(session, api_key, keyword, variants):
-    """Verilen varyasyonlardan ilk bulunanın pozisyonunu döndürür"""
-    print(f"\n🔎 '{keyword}' aramasında {len(variants)} varyasyon aranıyor...")
+async def find_first_variant_position_async(keyword: str, variants: List[str]) -> Dict:
+    """Varyasyonların pozisyonunu asenkron olarak bul"""
+    logger.info(f"🔎 '{keyword}' aramasında {len(variants)} varyasyon aranıyor...")
     
     page_num = 1
     total_position = 0
@@ -101,19 +127,20 @@ def find_first_variant_position(session, api_key, keyword, variants):
             else:
                 url = f"https://www.amazon.com/s?k={keyword.replace(' ', '+')}&page={page_num}"
             
-            print(f"\n📄 Sayfa {page_num} kontrol ediliyor...")
+            logger.info(f"📄 Sayfa {page_num} kontrol ediliyor...")
             
-            # ScraperAPI ile sayfayı çek
-            response = scrape_url(session, url, api_key)
-            if response.status_code != 200:
-                print(f"\n❌ Sayfa çekme hatası: {response.status_code}")
+            # Sayfayı scrape et
+            status, html = await scrape_url_async(url)
+            if status != 200:
+                logger.error(f"❌ Sayfa çekme hatası: Status={status}, Page={page_num}")
                 page_num += 1
                 continue
                 
-            soup = BeautifulSoup(response.text, 'lxml')
+            soup = BeautifulSoup(html, 'lxml')
             products = []
             
             # Ürünleri bul
+            logger.debug(f"🔍 Sayfa {page_num}'de ürünler aranıyor...")
             for index, element in enumerate(soup.find_all(attrs={'data-asin': True}), 1):
                 asin = element.get('data-asin')
                 if asin:
@@ -124,7 +151,7 @@ def find_first_variant_position(session, api_key, keyword, variants):
                         'sponsored': sponsored
                     })
             
-            print(f"📊 Bu sayfada {len(products)} ürün bulundu")
+            logger.info(f"📊 Bu sayfada {len(products)} ürün bulundu")
             
             for product in products:
                 total_position += 1
@@ -138,25 +165,25 @@ def find_first_variant_position(session, api_key, keyword, variants):
                         'total_position': total_position,
                         'sponsored': product['sponsored']
                     }
-                    print(f"\n✅ Varyasyon bulundu: {product['asin']}")
-                    print(f"📊 Sayfa: {page_num}")
-                    print(f"📊 Sayfa içi pozisyon: {product['position']}")
-                    print(f"📊 Genel pozisyon: {total_position}")
-                    print(f"🏷️ Sponsorlu: {'Evet' if product['sponsored'] else 'Hayır'}")
+                    logger.info(f"✅ Varyasyon bulundu: {product['asin']}")
+                    logger.info(f"📊 Sayfa: {page_num}")
+                    logger.info(f"📊 Sayfa içi pozisyon: {product['position']}")
+                    logger.info(f"📊 Genel pozisyon: {total_position}")
+                    logger.info(f"🏷️ Sponsorlu: {'Evet' if product['sponsored'] else 'Hayır'}")
                     return found_data
             
             if found_variant:
                 break
                 
             page_num += 1
-            random_sleep()
+            await random_sleep_async()
             
         except Exception as e:
-            print(f"\n❌ Sayfa {page_num} kontrol edilirken hata: {str(e)}")
+            logger.error(f"❌ Sayfa {page_num} kontrol edilirken hata: {str(e)}", exc_info=True)
             page_num += 1
             continue
     
-    print("\n❌ Hiçbir varyasyon bulunamadı!")
+    logger.warning("❌ Hiçbir varyasyon bulunamadı!")
     return {
         'found': False,
         'found_variant': None,
@@ -166,104 +193,45 @@ def find_first_variant_position(session, api_key, keyword, variants):
         'sponsored': None
     }
 
-def process_asin(session, api_key, asin, title):
-    """Tek bir ASIN'i işle"""
-    print(f"\n{'='*50}")
-    print(f"📦 ASIN: {asin}")
-    print(f"📝 Başlık: {title}")
-    print(f"{'='*50}")
+async def process_asin_async(asin: str, keyword: str) -> Dict:
+    """ASIN'i asenkron olarak işle"""
+    logger.info(f"🔍 İşleniyor: ASIN={asin}, API Key={API_KEY}")
     
     try:
         # Varyasyonları bul
-        variants = get_all_variants(session, api_key, asin)
+        variants = await get_variants_async(asin)
         
         if variants:
             # İlk bulunan varyasyonun pozisyonunu bul
-            result = find_first_variant_position(session, api_key, title, variants)
-            
-            # Sonuçları kaydet
+            result = await find_first_variant_position_async(keyword, variants)
             result['asin'] = asin
-            result['title'] = title
-            
+            result['keyword'] = keyword
+            logger.info(f"✅ İşlem tamamlandı: ASIN={asin}, Sonuç={result}")
             return result
-        
-    except Exception as e:
-        print(f"\n❌ Genel hata: {str(e)}")
-        return {
-            'asin': asin,
-            'title': title,
-            'error': str(e)
-        }
-
-def main():
-    # Komut satırı argümanlarını parse et
-    parser = argparse.ArgumentParser(description='Amazon ASIN Scraper')
-    parser.add_argument('-a', '--asin', help='Tek bir ASIN için arama yap')
-    parser.add_argument('-k', '--keyword', help='Arama kelimesi')
-    args = parser.parse_args()
-
-    # .env dosyasından API anahtarını al
-    load_dotenv()
-    api_key = os.getenv('SCRAPER_API_KEY')
-    if not api_key:
-        print("❌ SCRAPER_API_KEY bulunamadı!")
-        return
-
-    print(f"\n🔑 API Anahtarı: {api_key}\n")
-
-    # Session oluştur
-    session = get_scraper_session(api_key)
-
-    # Tek ASIN için arama yapılıyorsa
-    if args.asin and args.keyword:
-        print(f"\n==================================================")
-        print(f"📦 ASIN: {args.asin}")
-        print(f"📝 Başlık: {args.keyword}")
-        print(f"==================================================\n")
-        
-        result = process_asin(session, api_key, args.asin, args.keyword)
-        if result:
-            print("\n✅ Sonuçlar asin_results.json dosyasına kaydedildi.")
-        return
-
-    # Tüm ASIN'ler için arama yap
-    asins = [
-        ("B0DQYQKZQ2", "bounty paper towels"),
-        ("B0DF8RSVJK", "scott paper towels"),
-        ("B0DNTQ2YNT", "storage organizer"),
-        ("B0DN8C9MTN", "paper bowls"),
-        ("B0DLT4GBST", "jello shot cups"),
-        ("B0DP2D8ZJT", "air fryer liners"),
-        ("B0DSJW8SFG", "ice cream maker"),
-        ("B0DRS9YN56", "espresso machine"),
-        ("B0DRTR6F12", "coffee pods"),
-        ("B0DTJR3HTL", "cream maker pints")
-    ]
-
-    results = []
-    for i, (asin, title) in enumerate(asins, 1):
-        print(f"\n==================================================")
-        print(f"📦 ASIN: {asin}")
-        print(f"📝 Başlık: {title}")
-        print(f"==================================================\n")
-        
-        result = process_asin(session, api_key, asin, title)
-        if result:
-            results.append(result)
             
-            # Her 5 ASIN'de bir sonuçları kaydet
-            if i % 5 == 0:
-                save_results(results)
-                print(f"\n✅ {i} ASIN için sonuçlar kaydedildi.")
-                results = []  # Sonuçları temizle
-                
-        # Her ASIN arasında 2-5 saniye bekle
-        time.sleep(random.uniform(2, 5))
+    except Exception as e:
+        logger.error(f"❌ Genel hata: ASIN={asin}, Hata={str(e)}", exc_info=True)
     
-    # Kalan sonuçları kaydet
-    if results:
-        save_results(results)
-        print(f"\n✅ Kalan sonuçlar kaydedildi.")
+    return {
+        'asin': asin,
+        'keyword': keyword,
+        'found': False,
+        'found_variant': None,
+        'page': None,
+        'page_position': None,
+        'total_position': None,
+        'sponsored': False
+    }
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description='Amazon ASIN Scraper')
+    parser.add_argument('-a', '--asin', required=True, help='Amazon ASIN')
+    parser.add_argument('-k', '--keyword', required=True, help='Search keyword')
+    args = parser.parse_args()
+    
+    result = asyncio.run(process_asin_async(args.asin, args.keyword))
+    print(json.dumps(result, indent=2))
+    
+    # Sonuçları dosyaya kaydet
+    with open('asin_results.json', 'w') as f:
+        json.dump(result, f, indent=2)
