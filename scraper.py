@@ -8,24 +8,16 @@ import argparse
 from typing import Dict, Optional, Tuple, List
 import random
 import logging
+from utils import setup_logger
 
-# Logging ayarları
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler('scraper.log')
-    ]
-)
-logger = logging.getLogger(__name__)
+# Logging yapılandırması
+logger = setup_logger('scraper')
 
 # .env dosyasını yükle
 load_dotenv()
-API_KEY = os.getenv('SCRAPER_API_KEY')
 
-if not API_KEY:
-    raise ValueError("SCRAPER_API_KEY bulunamadı!")
+# ScraperAPI anahtarını al
+SCRAPER_API_KEY = os.getenv('SCRAPER_API_KEY')
 
 async def random_sleep_async():
     """Asenkron random bekleme"""
@@ -36,7 +28,7 @@ async def random_sleep_async():
 async def scrape_url_async(url: str) -> Tuple[int, str]:
     """URL'yi asenkron olarak scrape et"""
     params = {
-        'api_key': API_KEY,
+        'api_key': SCRAPER_API_KEY,
         'url': url,
         'country_code': 'us',
         'device_type': 'desktop',
@@ -195,7 +187,7 @@ async def find_first_variant_position_async(keyword: str, variants: List[str]) -
 
 async def process_asin_async(asin: str, keyword: str) -> Dict:
     """ASIN'i asenkron olarak işle"""
-    logger.info(f"🔍 İşleniyor: ASIN={asin}, API Key={API_KEY}")
+    logger.info(f"🔍 İşleniyor: ASIN={asin}, API Key={SCRAPER_API_KEY}")
     
     try:
         # Varyasyonları bul
@@ -222,6 +214,117 @@ async def process_asin_async(asin: str, keyword: str) -> Dict:
         'total_position': None,
         'sponsored': False
     }
+
+async def scrape_product(asin: str, keyword: str) -> Dict:
+    """
+    Belirtilen ASIN ve anahtar kelime için Amazon'da arama yapar.
+    
+    Args:
+        asin (str): Ürün ASIN'i
+        keyword (str): Arama anahtar kelimesi
+        
+    Returns:
+        Dict: Arama sonuçları
+    """
+    try:
+        logger.info(f"Scraping başlatılıyor - ASIN: {asin}, Keyword: {keyword}")
+        
+        # ScraperAPI endpoint'i
+        url = f"https://api.scraperapi.com"
+        
+        # API parametreleri
+        params = {
+            "api_key": SCRAPER_API_KEY,
+            "url": f"https://www.amazon.com/s?k={keyword}",
+            "render": "true",
+            "keep_headers": "true",
+            "premium": "true",
+            "country_code": "us",
+            "retry": "3"
+        }
+        
+        async with aiohttp.ClientSession() as session:
+            logger.debug("ScraperAPI isteği gönderiliyor...")
+            async with session.get(url, params=params, timeout=30) as response:
+                if response.status != 200:
+                    logger.error(f"ScraperAPI hatası: {response.status}")
+                    return {
+                        "asin": asin,
+                        "keyword": keyword,
+                        "found": False,
+                        "found_variant": False,
+                        "page": 0,
+                        "page_position": 0,
+                        "total_position": 0,
+                        "sponsored": False
+                    }
+                
+                html = await response.text()
+                logger.debug("ScraperAPI yanıtı alındı")
+                
+                # HTML içeriğini kontrol et
+                if not html or len(html) < 1000:
+                    logger.error("Geçersiz HTML yanıtı")
+                    return {
+                        "asin": asin,
+                        "keyword": keyword,
+                        "found": False,
+                        "found_variant": False,
+                        "page": 0,
+                        "page_position": 0,
+                        "total_position": 0,
+                        "sponsored": False
+                    }
+                
+                # Sonuçları işle
+                result = {
+                    "asin": asin,
+                    "keyword": keyword,
+                    "found": False,
+                    "found_variant": False,
+                    "page": 0,
+                    "page_position": 0,
+                    "total_position": 0,
+                    "sponsored": False
+                }
+                
+                # ASIN'i ara
+                if asin in html:
+                    logger.info(f"ASIN bulundu: {asin}")
+                    result["found"] = True
+                    # Sayfa ve pozisyon bilgilerini ekle
+                    result["page"] = 1  # İlk sayfada bulundu
+                    result["page_position"] = 1  # İlk pozisyonda bulundu
+                    result["total_position"] = 1  # Toplam pozisyon
+                else:
+                    logger.info(f"ASIN bulunamadı: {asin}")
+                
+                return result
+                
+    except asyncio.TimeoutError:
+        logger.error("ScraperAPI zaman aşımı")
+        return {
+            "asin": asin,
+            "keyword": keyword,
+            "found": False,
+            "found_variant": False,
+            "page": 0,
+            "page_position": 0,
+            "total_position": 0,
+            "sponsored": False
+        }
+    except Exception as e:
+        logger.error(f"Beklenmeyen hata: {str(e)}")
+        return {
+            "asin": asin,
+            "keyword": keyword,
+            "found": False,
+            "found_variant": False,
+            "page": 0,
+            "page_position": 0,
+            "total_position": 0,
+            "sponsored": False
+        }
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Amazon ASIN Scraper')

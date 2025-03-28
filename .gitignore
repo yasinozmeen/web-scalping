@@ -46,3 +46,6 @@ ca.mdc
 .Spotlight-V100
 .Trashes
 ehthumbs.db
+
+#Loglar
+*.log
